@@ -1,63 +1,453 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<title>CSF 在线编辑器</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;margin:0;padding:1rem;background:#f5f7fa;color:#222;}
-h1{font-size:1.8rem;margin:0 0 1rem;font-weight:600;}
-.container{max-width:1200px;margin:auto;}
-.controls{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem;}
-table{border-collapse:collapse;width:100%;background:#fff;}
-th,td{border:1px solid #ddd;padding:.5rem;}
-th{background:#eee;text-align:left;}
-input[type=text]{width:100%;border:none;background:transparent;outline:none;}
-textarea{width:100%;height:4.5rem;resize:vertical;border:none;background:transparent;outline:none;font-family:inherit;}
-button{cursor:pointer;border:none;padding:.5rem 1rem;border-radius:.25rem;font-size:.9rem;}
-button.primary{background:#2563eb;color:#fff;}
-button.secondary{background:#e2e8f0;}
-button:disabled{opacity:.5;cursor:not-allowed;}
-.file-input::file-selector-button{padding:.5rem 1rem;border:none;border-radius:.25rem;background:#2563eb;color:#fff;cursor:pointer;}
-footer{margin-top:2rem;font-size:.8rem;color:#555;text-align:center;}
-</style>
-</head>
-<body>
-<div class="container">
-<h1>CSF 在线编辑器</h1>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>CSF 字串表在线编辑器</title>
+    <style>
+      body {
+        font-family: system-ui, Roboto, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f6f8fa;
+        color: #222;
+      }
 
-<div class="controls">
-  <input class="file-input" type="file" accept=".csf" id="fileInput">
-  <button class="secondary" id="newBtn">新建空白</button>
-  <button class="secondary" id="addBtn">新增条目</button>
-  <button class="primary" id="saveBtn">保存 CSF</button>
-</div>
+      h1 {
+        font-size: 1.6rem;
+        margin-bottom: 1rem;
+      }
 
-<div style="overflow-x:auto">
-<table id="csfTable">
-  <thead>
-    <tr><th style="width:25%">Label</th><th>Value (支持换行)</th></tr>
-  </thead>
-  <tbody></tbody>
-</table>
-</div>
+      #controls {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+      }
 
-<footer>本工具纯前端实现，文件仅在本地浏览器处理，不会上传。</footer>
-</div>
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
 
-<script>
-/* ----------- CSF Utilities ----------- */
-function invertBytes(uint8){const o=new Uint8Array(uint8.length);for(let i=0;i<uint8.length;i++)o[i]=(~uint8[i])&0xFF;return o;}
-function decodeValue(raw){return new TextDecoder('utf-16le').decode(invertBytes(raw));}
-function encodeValue(str){return invertBytes(new TextEncoder('utf-16le').encode(str));}
-function parseCSF(buffer){const dv=new DataView(buffer);let off=0;const magic=String.fromCharCode(...new Uint8Array(buffer,0,4));if(magic!==" FSC")throw new Error('不是有效CSF文件');off=4;const version=dv.getUint32(off,true);off+=4;const numLabels=dv.getUint32(off,true);off+=4;const numStrings=dv.getUint32(off,true);off+=4;off+=4;const lang=dv.getUint32(off,true);off+=4;const entries=[];for(let i=0;i<numLabels;i++){const marker=String.fromCharCode(...new Uint8Array(buffer,off,4));off+=4;if(marker!==" LBL")throw new Error('结构异常: 未找到 LBL');const strCount=dv.getUint32(off,true);off+=4;const nameLen=dv.getUint32(off,true);off+=4;const nameBytes=new Uint8Array(buffer,off,nameLen);off+=nameLen;const label=new TextDecoder().decode(nameBytes);const valMarker=String.fromCharCode(...new Uint8Array(buffer,off,4));off+=4;const valLen=dv.getUint32(off,true);off+=4;const raw=new Uint8Array(buffer,off,valLen*2);off+=valLen*2;const value=decodeValue(raw);if(valMarker==="WRTS"){const extraLen=dv.getUint32(off,true);off+=4+extraLen;}entries.push({label,value});}return entries;}
-function buildCSF(entries){const encoder=new TextEncoder();let size=0x18;entries.forEach(e=>{const nameBytes=encoder.encode(e.label);const valBytes=encodeValue(e.value+"\r\n");size+=4+4+4+nameBytes.length;size+=4+4+valBytes.length;});const buffer=new ArrayBuffer(size);const dv=new DataView(buffer);let off=0;new Uint8Array(buffer,off,4).set([0x20,0x46,0x53,0x43]);off+=4;dv.setUint32(off,3,true);off+=4;dv.setUint32(off,entries.length,true);off+=4;dv.setUint32(off,entries.length,true);off+=4;off+=4;dv.setUint32(off,0,true);off+=4;entries.forEach(e=>{const nameBytes=encoder.encode(e.label);const valBytes=encodeValue(e.value+"\r\n");new Uint8Array(buffer,off,4).set([0x20,0x4c,0x42,0x4c]);off+=4;dv.setUint32(off,1,true);off+=4;dv.setUint32(off,nameBytes.length,true);off+=4;new Uint8Array(buffer,off,nameBytes.length).set(nameBytes);off+=nameBytes.length;new Uint8Array(buffer,off,4).set([0x20,0x52,0x54,0x53]);off+=4;dv.setUint32(off,valBytes.length/2,true);off+=4;new Uint8Array(buffer,off,valBytes.length).set(valBytes);off+=valBytes.length;});return buffer;}
-/* ----------- UI logic ----------- */
-let csfData=[];const tbody=document.querySelector('#csfTable tbody');function renderTable(){tbody.innerHTML='';csfData.forEach((row,idx)=>{const tr=document.createElement('tr');const tdLabel=document.createElement('td');const input=document.createElement('input');input.type='text';input.value=row.label;input.oninput=e=>{row.label=e.target.value;};tdLabel.appendChild(input);const tdValue=document.createElement('td');const textarea=document.createElement('textarea');textarea.value=row.value;textarea.oninput=e=>{row.value=e.target.value;};tdValue.appendChild(textarea);tr.appendChild(tdLabel);tr.appendChild(tdValue);tbody.appendChild(tr);});}
-document.getElementById('fileInput').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=evt=>{try{csfData=parseCSF(evt.target.result);renderTable();}catch(err){alert(err.message);}};reader.readAsArrayBuffer(file);});
-document.getElementById('addBtn').addEventListener('click',()=>{csfData.push({label:'NEW_LABEL',value:''});renderTable();});
-document.getElementById('newBtn').addEventListener('click',()=>{csfData=[];renderTable();document.getElementById('fileInput').value='';});
-document.getElementById('saveBtn').addEventListener('click',()=>{if(csfData.length===0){alert('没有内容可保存');return;}try{const buf=buildCSF(csfData);const blob=new Blob([buf],{type:'application/octet-stream'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='stringtable_new.csf';a.click();URL.revokeObjectURL(url);}catch(err){alert('保存失败: '+err.message);}});
-</script>
-</body>
+      th,
+      td {
+        border: 1px solid #ccc;
+        padding: 0.25rem 0.5rem;
+        word-break: break-all;
+      }
+
+      th {
+        background: #e9ecef;
+        text-align: left;
+      }
+
+      #tableWrapper {
+        max-height: 70vh;
+        overflow: auto;
+        border: 1px solid #ddd;
+      }
+
+      button {
+        padding: 0.45rem 1.1rem;
+        border: none;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        background: #4f8cff;
+        color: #fff;
+        font-size: 0.9rem;
+      }
+
+      button.secondary {
+        background: #6c757d;
+      }
+
+      button.danger {
+        background: #dc3545;
+      }
+
+      button:disabled {
+        background: #9bbefc;
+        cursor: not-allowed;
+      }
+
+      input[type="file"] {
+        padding: 0.25rem 0.5rem;
+      }
+
+      #modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+
+      #modal.show {
+        display: flex;
+      }
+
+      .modal-card {
+        background: #fff;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+        padding: 1.5rem;
+        min-width: 260px;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .modal-card h2 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+
+      .modal-card label {
+        font-size: 0.85rem;
+        color: #555;
+      }
+
+      .modal-card input {
+        width: 100%;
+        padding: 0.4rem 0.5rem;
+        border: 1px solid #ccc;
+        border-radius: 0.25rem;
+        font-size: 0.9rem;
+      }
+
+      .modal-actions {
+        display: flex;
+        gap: 1rem;
+        justify-content: flex-end;
+      }
+
+      /* Added styles for table inputs/textareas */
+      td input[type="text"],
+      td textarea {
+        width: 100%;
+        border: none;
+        background: transparent;
+        padding: 0; /* TD provides padding */
+        margin: 0;
+        font-family: inherit;
+        font-size: inherit;
+        color: inherit;
+        outline: none;
+        box-sizing: border-box;
+      }
+
+      td textarea {
+        resize: vertical;
+        min-height: 1.5em; /* Approx 1 line */
+        display: block; /* Allow full width and height adjustments */
+        overflow-y: hidden; /* For auto-resize */
+      }
+
+      td input[type="text"]:focus,
+      td textarea:focus {
+        background: #ffffff;
+        /* Optional: add a subtle border or shadow for focus */
+        /* box-shadow: inset 0 0 0 1px #4f8cff; */
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>CSF 字串表在线编辑器</h1>
+    <div id="controls">
+      <input type="file" id="fileInput" accept=".csf" /><button
+        id="newBtn"
+        class="secondary"
+      >
+        新建空白</button
+      ><button id="addBtn">新增条目</button
+      ><button id="delBtn" class="danger" disabled>删除选中</button
+      ><button id="saveBtn" disabled>下载保存</button>
+    </div>
+    <div id="tableWrapper">
+      <table id="csfTable">
+        <thead>
+          <tr>
+            <th style="width: 40px"><input type="checkbox" id="chkAll" /></th>
+            <th style="width: 35%">Label</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div id="modal">
+      <div class="modal-card">
+        <h2>添加新条目</h2>
+        <div>
+          <label for="labelInput">Label</label
+          ><input id="labelInput" type="text" />
+        </div>
+        <div>
+          <label for="valueInput">Value</label
+          ><input id="valueInput" type="text" placeholder="可留空" />
+        </div>
+        <div class="modal-actions">
+          <button id="cancelModal" class="secondary">取消</button
+          ><button id="confirmModal">确定</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        const f = document.getElementById("fileInput"),
+          s = document.getElementById("saveBtn"),
+          b = document.querySelector("#csfTable tbody"),
+          a = document.getElementById("chkAll"),
+          n = document.getElementById("newBtn"),
+          p = document.getElementById("addBtn"),
+          d = document.getElementById("delBtn"),
+          m = document.getElementById("modal"),
+          l = document.getElementById("labelInput"),
+          v = document.getElementById("valueInput"),
+          c = document.getElementById("cancelModal"),
+          o = document.getElementById("confirmModal");
+        let e = [],
+          r = {},
+          t,
+          g = 1;
+        f.addEventListener("change", (u) => {
+          const i = u.target.files[0];
+          if (!i) return;
+          const h = new FileReader();
+          h.onload = (j) => {
+            t = new Uint8Array(j.target.result);
+            try {
+              k(t);
+            } catch (z) {
+              alert("解析失败: " + z.message);
+            }
+          };
+          h.readAsArrayBuffer(i);
+        });
+        n.addEventListener("click", () => {
+          if (!confirm("确认创建空白 CSF？当前未保存内容将丢失。")) return;
+          (e = []), (r = { version: 3, lang: 0 });
+          g = 1;
+          q();
+          s.disabled = false;
+        });
+        p.addEventListener("click", () => {
+          const u = `a:${g}`;
+          g++;
+          l.value = u;
+          v.value = "";
+          m.classList.add("show");
+          l.focus();
+        });
+        c.addEventListener("click", () => m.classList.remove("show"));
+        o.addEventListener("click", () => {
+          const u = l.value.trim();
+          if (!u) return alert("Label 不能为空");
+          if (e.some((i) => i.name === u)) return alert("Label 已存在");
+          const h = v.value;
+          e.push({ name: u, value: h, marker: " RTS" });
+          q();
+          m.classList.remove("show");
+        });
+        d.addEventListener("click", () => {
+          e = e.filter(
+            (u, i) => !document.querySelector(`#row_${i} .rowChk`).checked
+          );
+          a.checked = false;
+          q();
+        });
+        a.addEventListener("change", (u) => {
+          document
+            .querySelectorAll(".rowChk")
+            .forEach((i) => (i.checked = u.target.checked));
+          d.disabled = !u.target.checked;
+        });
+        s.addEventListener("click", () => {
+          const u = new Blob([y()], { type: "application/octet-stream" }),
+            i = URL.createObjectURL(u),
+            h = document.createElement("a");
+          h.href = i;
+          h.download = "edited_" + (f.files[0]?.name || "stringtable.csf");
+          h.click();
+          URL.revokeObjectURL(i);
+        });
+        function k(u) {
+          e = [];
+          r = {};
+          b.innerHTML = "";
+          a.checked = false;
+          g = 1;
+          const i = new DataView(u.buffer);
+          let h = 0;
+          function H(x) {
+            return String.fromCharCode.apply(null, u.subarray(h, h + x));
+          }
+          if (H(4) !== " FSC") throw new Error("魔数字符不匹配");
+          h += 4;
+          r.version = i.getUint32(h, true);
+          h += 4;
+          r.numLabels = i.getUint32(h, true);
+          h += 4;
+          r.numStrings = i.getUint32(h, true);
+          h += 4;
+          h += 4;
+          r.lang = i.getUint32(h, true);
+          h += 4;
+          for (let x = 0; x < r.numLabels; x++) {
+            if (H(4) !== " LBL") break;
+            h += 4;
+            const W = i.getUint32(h, true);
+            h += 4;
+            const S = i.getUint32(h, true);
+            h += 4;
+            const L = String.fromCharCode.apply(null, u.subarray(h, h + S));
+            h += S;
+            const O = String.fromCharCode.apply(null, u.subarray(h, h + 4));
+            h += 4;
+            const P = i.getUint32(h, true);
+            h += 4;
+            const U = u.subarray(h, h + P * 2);
+            h += P * 2;
+            const C = D(U);
+            if (O === "WRTS") {
+              const R = i.getUint32(h, true);
+              h += 4 + R;
+            }
+            e.push({ name: L, value: C, marker: O });
+          }
+          q();
+          s.disabled = false;
+        }
+        function q() {
+          b.innerHTML = "";
+          const u = document.createDocumentFragment();
+          e.forEach((i, h) => {
+            const H = document.createElement("tr");
+            H.id = `row_${h}`;
+            const W = document.createElement("td"),
+              S = document.createElement("input");
+            S.type = "checkbox";
+            S.className = "rowChk";
+            S.addEventListener("change", () => {
+              d.disabled =
+                document.querySelectorAll(".rowChk:checked").length === 0;
+              a.checked = false;
+            });
+            W.appendChild(S);
+
+            const L_td = document.createElement("td");
+            const L_input = document.createElement("input");
+            L_input.type = "text";
+            L_input.value = i.name;
+            L_input.addEventListener("change", (x) => { // Using 'change' to commit on blur/enter
+              const O = x.target.value.trim();
+              if (!O) {
+                alert("Label 不能为空");
+                x.target.value = i.name; // Revert
+                return;
+              }
+              if (e.some((P, U) => U !== h && P.name === O)) {
+                alert("Label 重复");
+                x.target.value = i.name; // Revert
+                return;
+              }
+              i.name = O;
+            });
+            L_td.appendChild(L_input);
+
+            const O_td = document.createElement("td");
+            const O_textarea = document.createElement("textarea");
+            O_textarea.value = i.value || "";
+            O_textarea.rows = 1; // Initial rows, will auto-adjust
+
+            function autoResizeTextarea(ta) {
+              ta.style.height = "auto";
+              ta.style.height = ta.scrollHeight + "px";
+            }
+
+            O_textarea.addEventListener("input", () => {
+              i.value = O_textarea.value;
+              autoResizeTextarea(O_textarea);
+            });
+            
+            O_td.appendChild(O_textarea);
+            // Initial resize after appending to DOM or setting value
+            // Call after appending to td, or defer slightly
+            setTimeout(() => autoResizeTextarea(O_textarea), 0);
+
+
+            H.appendChild(W);
+            H.appendChild(L_td);
+            H.appendChild(O_td);
+            u.appendChild(H);
+          });
+          b.appendChild(u);
+          d.disabled = true;
+        }
+        function D(u) {
+          const i = u.length,
+            h = new Uint8Array(i);
+          for (let H = 0; H < i; H++) h[H] = ~u[H] & 255;
+          return new TextDecoder("utf-16le").decode(h).replace(/\0+$/, "").replace(/\r\n/g, "\n");
+        }
+        function E(u) {
+          const i = new Uint8Array((u.length + 1) * 2);
+          for (let h = 0; h < u.length; h++) {
+            const H = u.charCodeAt(h);
+            i[h * 2] = H & 255;
+            i[h * 2 + 1] = H >> 8;
+          }
+          return i;
+        }
+        function F(u) {
+          const i = E(u),
+            h = new Uint8Array(i.length);
+          for (let H = 0; H < i.length; H++) h[H] = ~i[H] & 255;
+          return h;
+        }
+        function N(u, s) {
+          const i = new Uint8Array(4);
+          new DataView(i.buffer).setUint32(0, s, true);
+          u.push(i);
+        }
+        function y() {
+          const u = [];
+          u.push(new TextEncoder().encode(" FSC"));
+          N(u, r.version || 3);
+          N(u, e.length);
+          N(u, e.length);
+          N(u, 0);
+          N(u, r.lang || 0);
+          e.forEach((i) => {
+            u.push(new TextEncoder().encode(" LBL"));
+            N(u, 1);
+            const h = new TextEncoder().encode(i.name);
+            N(u, h.length);
+            u.push(h);
+            const H =
+              i.marker === " RTS" || i.marker === "WRTS" ? i.marker : " RTS";
+            u.push(new TextEncoder().encode(H));
+            const W = F((i.value || "").replace(/\n/g, "\r\n"));
+            N(u, W.length / 2);
+            u.push(W);
+            if (H === "WRTS") N(u, 0);
+          });
+          let i = 0;
+          u.forEach((h) => (i += h.length));
+          const h = new Uint8Array(i);
+          let H = 0;
+          u.forEach((W) => {
+            h.set(W, H);
+            H += W.length;
+          });
+          return h.buffer;
+        }
+      })();
+    </script>
+  </body>
 </html>
